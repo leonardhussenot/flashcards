@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deutsch-pwa-v3';
+const CACHE_NAME = 'deutsch-pwa-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -6,6 +6,8 @@ const ASSETS = [
   './app.js',
   './db.js',
   './fsrs.js',
+  './grammar.js',
+  './dictionary.js',
   './manifest.webmanifest',
   './apple-touch-icon.png',
   './icon-192.png',

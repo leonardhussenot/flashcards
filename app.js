@@ -14,6 +14,9 @@ import {
   buildRevisionSession
 } from './fsrs.js';
 
+import { GRAMMAR_PAGES } from './grammar.js';
+import { filterAndSortCards } from './dictionary.js';
+
 const AI_EXTRACTION_PROMPT = `Analyze this German image or text and extract vocabulary for flashcards.
 
 - If the source is already a vocabulary list, extract all entries.
@@ -31,6 +34,8 @@ Rules:
 // DOM references
 const views = {
   menu: document.getElementById('view-menu'),
+  dictionary: document.getElementById('view-dictionary'),
+  grammar: document.getElementById('view-grammar'),
   addOne: document.getElementById('view-add-one'),
   batch: document.getElementById('view-batch'),
   revise: document.getElementById('view-revise'),
@@ -43,6 +48,8 @@ const curveLineEl = document.getElementById('curve-line');
 const menuStatusEl = document.getElementById('menu-status');
 
 const btnGoRevise = document.getElementById('btn-go-revise');
+const btnGoDictionary = document.getElementById('btn-go-dictionary');
+const btnGoGrammar = document.getElementById('btn-go-grammar');
 const btnGoAddOne = document.getElementById('btn-go-add-one');
 const btnGoBatch = document.getElementById('btn-go-batch');
 const btnCopyPrompt = document.getElementById('btn-copy-prompt');
@@ -50,6 +57,32 @@ const btnExport = document.getElementById('btn-export');
 const btnImport = document.getElementById('btn-import');
 const fileImport = document.getElementById('file-import');
 
+// Dictionary DOM
+const dictCountEl = document.getElementById('dict-count');
+const inputDictSearch = document.getElementById('input-dict-search');
+const btnDictClear = document.getElementById('btn-dict-clear');
+const dictScrollEl = document.getElementById('dict-scroll');
+const dictListEl = document.getElementById('dict-list');
+const dictSentinelEl = document.getElementById('dict-sentinel');
+const dictEmptyEl = document.getElementById('dict-empty');
+
+const dictEditOverlayEl = document.getElementById('dict-edit-overlay');
+const formDictEdit = document.getElementById('form-dict-edit');
+const dictEditGermanInput = document.getElementById('dict-edit-german');
+const dictEditTranslationInput = document.getElementById('dict-edit-translation');
+const btnDictDelete = document.getElementById('btn-dict-delete');
+const btnDictConfirmDelete = document.getElementById('btn-dict-confirm-delete');
+const btnDictCancel = document.getElementById('btn-dict-cancel');
+
+// Grammar DOM
+const grammarPageTitleEl = document.getElementById('grammar-page-title');
+const grammarCounterEl = document.getElementById('grammar-counter');
+const grammarTrackEl = document.getElementById('grammar-track');
+const grammarDotsEl = document.getElementById('grammar-dots');
+const btnGrammarPrev = document.getElementById('btn-grammar-prev');
+const btnGrammarNext = document.getElementById('btn-grammar-next');
+
+// Add / Batch DOM
 const formAddOne = document.getElementById('form-add-one');
 const inputGerman = document.getElementById('input-german');
 const inputTranslation = document.getElementById('input-translation');
@@ -57,8 +90,10 @@ const addOneStatus = document.getElementById('add-one-status');
 
 const formBatch = document.getElementById('form-batch');
 const inputBatch = document.getElementById('input-batch');
+const btnBatchPaste = document.getElementById('btn-batch-paste');
 const batchStatus = document.getElementById('batch-status');
 
+// Revise DOM
 const reviseCounterEl = document.getElementById('revise-counter');
 const flashcardEl = document.getElementById('flashcard');
 const flashcardInnerEl = document.getElementById('flashcard-inner');
@@ -97,6 +132,15 @@ let hasRevealedCurrent = false;
 let isAdvancing = false;
 let sessionStats = { well: 0, approx: 0, not: 0 };
 let statusTimer = null;
+
+// Dictionary state
+const DICT_CHUNK_SIZE = 100;
+let dictFilteredCards = [];
+let dictRenderedCount = 0;
+let dictEditingCard = null;
+
+// Grammar state
+let currentGrammarPage = 0;
 
 function showView(name) {
   for (const [key, el] of Object.entries(views)) {
@@ -179,6 +223,274 @@ function renderKnowledgeCurve(cards) {
 async function refreshMenu() {
   allCards = await getAllCards();
   renderKnowledgeCurve(allCards);
+}
+
+// --- DICTIONARY VIEW (SCROLL & SEARCH) ---
+
+function createDictRow(card) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'dict-row';
+  row.setAttribute('role', 'listitem');
+
+  const deSpan = document.createElement('span');
+  deSpan.className = 'dict-de';
+  deSpan.textContent = card.german;
+
+  const trSpan = document.createElement('span');
+  trSpan.className = 'dict-tr';
+  trSpan.textContent = card.translation;
+
+  row.appendChild(deSpan);
+  row.appendChild(trSpan);
+
+  row.addEventListener('click', () => openDictEditOverlay(card));
+  return row;
+}
+
+function appendNextDictChunk() {
+  if (dictRenderedCount >= dictFilteredCards.length) return;
+
+  const end = Math.min(
+    dictRenderedCount + DICT_CHUNK_SIZE,
+    dictFilteredCards.length
+  );
+  const frag = document.createDocumentFragment();
+  for (let i = dictRenderedCount; i < end; i++) {
+    frag.appendChild(createDictRow(dictFilteredCards[i]));
+  }
+  dictListEl.appendChild(frag);
+  dictRenderedCount = end;
+}
+
+function updateDictionaryList(resetScroll = true) {
+  const query = inputDictSearch.value;
+  const hasQuery = query.trim().length > 0;
+  btnDictClear.classList.toggle('is-gone', !hasQuery);
+
+  dictFilteredCards = filterAndSortCards(allCards, query);
+  dictListEl.textContent = '';
+  dictRenderedCount = 0;
+
+  if (allCards.length === 0) {
+    dictCountEl.textContent = '0';
+    dictEmptyEl.textContent = 'No cards yet';
+    dictEmptyEl.classList.remove('is-gone');
+    return;
+  }
+
+  dictCountEl.textContent = hasQuery
+    ? `${dictFilteredCards.length} / ${allCards.length}`
+    : `${allCards.length}`;
+
+  if (dictFilteredCards.length === 0) {
+    dictEmptyEl.textContent = 'No matching cards';
+    dictEmptyEl.classList.remove('is-gone');
+    return;
+  }
+
+  dictEmptyEl.classList.add('is-gone');
+  if (resetScroll) {
+    dictScrollEl.scrollTop = 0;
+  }
+  appendNextDictChunk();
+  while (
+    dictScrollEl.clientHeight > 0 &&
+    dictRenderedCount < dictFilteredCards.length &&
+    dictScrollEl.scrollHeight <= dictScrollEl.clientHeight + 280
+  ) {
+    appendNextDictChunk();
+  }
+}
+
+async function openDictionaryView() {
+  allCards = await getAllCards();
+  inputDictSearch.value = '';
+  closeDictEditOverlay();
+  showView('dictionary');
+  updateDictionaryList(true);
+}
+
+dictScrollEl.addEventListener(
+  'scroll',
+  () => {
+    if (
+      dictRenderedCount < dictFilteredCards.length &&
+      dictScrollEl.scrollTop + dictScrollEl.clientHeight >=
+        dictScrollEl.scrollHeight - 320
+    ) {
+      appendNextDictChunk();
+    }
+  },
+  { passive: true }
+);
+
+const dictObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        appendNextDictChunk();
+      }
+    }
+  },
+  { root: dictScrollEl, rootMargin: '280px' }
+);
+dictObserver.observe(dictSentinelEl);
+
+inputDictSearch.addEventListener('input', () => {
+  updateDictionaryList(true);
+});
+
+btnDictClear.addEventListener('click', () => {
+  inputDictSearch.value = '';
+  updateDictionaryList(true);
+  inputDictSearch.focus();
+});
+
+function resetDictDeleteConfirm() {
+  btnDictDelete.classList.remove('is-gone');
+  btnDictConfirmDelete.classList.add('is-gone');
+}
+
+function openDictEditOverlay(card) {
+  dictEditingCard = card;
+  dictEditGermanInput.value = card.german;
+  dictEditTranslationInput.value = card.translation;
+  resetDictDeleteConfirm();
+  dictEditOverlayEl.classList.remove('is-hidden');
+}
+
+function closeDictEditOverlay() {
+  dictEditingCard = null;
+  resetDictDeleteConfirm();
+  dictEditOverlayEl.classList.add('is-hidden');
+}
+
+btnDictCancel.addEventListener('click', closeDictEditOverlay);
+dictEditOverlayEl.addEventListener('click', (e) => {
+  if (e.target === dictEditOverlayEl) {
+    closeDictEditOverlay();
+  }
+});
+
+btnDictDelete.addEventListener('click', () => {
+  btnDictDelete.classList.add('is-gone');
+  btnDictConfirmDelete.classList.remove('is-gone');
+});
+
+btnDictConfirmDelete.addEventListener('click', async () => {
+  if (!dictEditingCard) return;
+  const scrollPos = dictScrollEl.scrollTop;
+  await deleteCard(dictEditingCard.id);
+  allCards = await getAllCards();
+  closeDictEditOverlay();
+  updateDictionaryList(false);
+  dictScrollEl.scrollTop = scrollPos;
+});
+
+formDictEdit.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!dictEditingCard) return;
+
+  const german = cleanText(dictEditGermanInput.value);
+  const translation = cleanText(dictEditTranslationInput.value);
+  if (!german || !translation) return;
+
+  const scrollPos = dictScrollEl.scrollTop;
+  await saveCard({
+    ...dictEditingCard,
+    german,
+    translation
+  });
+  allCards = await getAllCards();
+  closeDictEditOverlay();
+  updateDictionaryList(false);
+  dictScrollEl.scrollTop = scrollPos;
+});
+
+// --- GRAMMAR CHEAT SHEET (5 SWIPEABLE PAGES) ---
+
+function initGrammarCheatSheet() {
+  grammarTrackEl.textContent = '';
+  grammarDotsEl.textContent = '';
+
+  GRAMMAR_PAGES.forEach((page, idx) => {
+    const slide = document.createElement('article');
+    slide.className = 'grammar-slide';
+    slide.setAttribute('aria-label', page.title);
+    slide.innerHTML = page.html;
+    grammarTrackEl.appendChild(slide);
+
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'grammar-dot';
+    dot.setAttribute('role', 'tab');
+    dot.setAttribute('aria-label', `${idx + 1}. ${page.title}`);
+    dot.addEventListener('click', () => goToGrammarPage(idx, true));
+    grammarDotsEl.appendChild(dot);
+  });
+
+  updateGrammarHeader(0);
+}
+
+function updateGrammarHeader(idx) {
+  const total = GRAMMAR_PAGES.length;
+  const safeIdx = Math.max(0, Math.min(total - 1, idx));
+  currentGrammarPage = safeIdx;
+
+  grammarPageTitleEl.textContent = GRAMMAR_PAGES[safeIdx].title;
+  grammarCounterEl.textContent = `${safeIdx + 1} / ${total}`;
+  btnGrammarPrev.disabled = safeIdx === 0;
+  btnGrammarNext.disabled = safeIdx === total - 1;
+
+  const dots = grammarDotsEl.children;
+  for (let i = 0; i < dots.length; i++) {
+    const active = i === safeIdx;
+    dots[i].classList.toggle('is-active', active);
+    dots[i].setAttribute('aria-selected', String(active));
+  }
+}
+
+function goToGrammarPage(idx, smooth = true) {
+  const total = GRAMMAR_PAGES.length;
+  const safeIdx = Math.max(0, Math.min(total - 1, idx));
+  const width = grammarTrackEl.clientWidth;
+  updateGrammarHeader(safeIdx);
+  if (smooth) {
+    grammarTrackEl.scrollTo({ left: safeIdx * width, behavior: 'smooth' });
+  } else {
+    grammarTrackEl.scrollLeft = safeIdx * width;
+  }
+}
+
+let grammarScrollRaf = null;
+grammarTrackEl.addEventListener('scroll', () => {
+  if (grammarScrollRaf) return;
+  grammarScrollRaf = requestAnimationFrame(() => {
+    grammarScrollRaf = null;
+    const width = grammarTrackEl.clientWidth;
+    if (width > 0) {
+      const idx = Math.round(grammarTrackEl.scrollLeft / width);
+      if (idx !== currentGrammarPage) {
+        updateGrammarHeader(idx);
+      }
+    }
+  });
+});
+
+btnGrammarPrev.addEventListener('click', () => {
+  goToGrammarPage(currentGrammarPage - 1, true);
+});
+
+btnGrammarNext.addEventListener('click', () => {
+  goToGrammarPage(currentGrammarPage + 1, true);
+});
+
+function openGrammarView() {
+  showView('grammar');
+  requestAnimationFrame(() => {
+    goToGrammarPage(currentGrammarPage, false);
+  });
 }
 
 // --- REVISION FLOW ---
@@ -368,7 +680,7 @@ formAddOne.addEventListener('submit', async (e) => {
   const translation = cleanText(inputTranslation.value);
   if (!german || !translation) return;
 
-  const { added, updated } = await upsertCardPairs([{ german, translation }]);
+  const { updated } = await upsertCardPairs([{ german, translation }]);
   inputGerman.value = '';
   inputTranslation.value = '';
   inputGerman.focus();
@@ -416,6 +728,33 @@ function parseBatchInput(rawText) {
 
   return { pairs };
 }
+
+btnBatchPaste.addEventListener('click', async () => {
+  if (!navigator.clipboard || !navigator.clipboard.readText) {
+    batchStatus.classList.add('is-error');
+    batchStatus.textContent = 'Clipboard paste requires HTTPS or localhost';
+    return;
+  }
+
+  try {
+    const clipText = await navigator.clipboard.readText();
+    const trimmed = clipText.trim();
+    if (!trimmed) {
+      batchStatus.classList.remove('is-error');
+      batchStatus.textContent = 'Clipboard is empty';
+      return;
+    }
+
+    const existing = inputBatch.value.trim();
+    inputBatch.value = existing ? `${existing}\n${trimmed}` : trimmed;
+    const lineCount = trimmed.split(/\r?\n/).filter((l) => l.trim()).length;
+    batchStatus.classList.remove('is-error');
+    batchStatus.textContent = `Pasted ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`;
+  } catch {
+    batchStatus.classList.add('is-error');
+    batchStatus.textContent = 'Paste declined or unavailable';
+  }
+});
 
 formBatch.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -541,6 +880,8 @@ fileImport.addEventListener('change', async () => {
 // --- NAVIGATION & INTERACTION BINDINGS ---
 
 btnGoRevise.addEventListener('click', startRevisionSession);
+btnGoDictionary.addEventListener('click', openDictionaryView);
+btnGoGrammar.addEventListener('click', openGrammarView);
 
 btnGoAddOne.addEventListener('click', () => {
   addOneStatus.textContent = '';
@@ -561,9 +902,21 @@ btnFinishSession.addEventListener('click', async () => {
 document.querySelectorAll('[data-go="menu"]').forEach((btn) => {
   btn.addEventListener('click', async () => {
     closeEditOverlay();
+    closeDictEditOverlay();
     await refreshMenu();
     showView('menu');
   });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!views.grammar.classList.contains('is-active')) return;
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    goToGrammarPage(currentGrammarPage - 1, true);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    goToGrammarPage(currentGrammarPage + 1, true);
+  }
 });
 
 flashcardEl.addEventListener('click', flipCurrentCard);
@@ -584,6 +937,7 @@ ratingBarEl.querySelectorAll('.rate-btn').forEach((btn) => {
 // --- INITIALIZATION & SERVICE WORKER ---
 
 async function init() {
+  initGrammarCheatSheet();
   await requestPersistentStorage();
   await refreshMenu();
 
