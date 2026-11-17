@@ -1,7 +1,7 @@
 {
-  "name": "Deutsch",
-  "short_name": "Deutsch",
-  "description": "Minimalist German flashcards with FSRS spaced repetition",
+  "name": "Cards",
+  "short_name": "Cards",
+  "description": "Minimalist flashcards with FSRS spaced repetition",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -14,10 +14,23 @@ import {
   buildRevisionSession
 } from './fsrs.js';
 
-import { GRAMMAR_PAGES } from './grammar.js';
+import { GRAMMAR_BY_LANG } from './grammar.js';
 import { filterAndSortCards } from './dictionary.js';
 
-const AI_EXTRACTION_PROMPT = `Analyze this German image or text and extract vocabulary for flashcards.
+const LANG_STORAGE_KEY = 'learned_lang';
+
+const LANG_CONFIG = {
+  de: {
+    code: 'de',
+    label: 'German',
+    title: 'Deutsch',
+    exportPrefix: 'deutsch-cards',
+    singlePlaceholderTarget: 'e.g. der Hund',
+    singlePlaceholderTranslation: 'e.g. le chien / the dog',
+    batchLabel: 'German | Translation',
+    batchPlaceholder:
+      'der Hund | the dog\nsich erinnern an | se souvenir de\ntrotzdem | nevertheless',
+    aiPrompt: `Analyze this German image or text and extract vocabulary for flashcards.
 
 - If the source is already a vocabulary list, extract all entries.
 - If the source is a full page of prose, dialogue, or an article, be selective: extract ONLY the salient, high-value words, collocations, and idiomatic expressions worth learning (skip basic filler words, proper names, and trivial grammar words). Convert conjugated verbs or declined nouns from the text into their clean base dictionary form.
@@ -29,7 +42,50 @@ Rules:
 - For German nouns, always include the definite article (der, die, das).
 - For verbs with fixed prepositions or reflexive forms, include them (e.g. sich erinnern an).
 - If translations are already present in the source, keep them; otherwise translate into natural French or English matching the context.
-- Output nothing else: no numbering, bullet points, headers, explanations, or markdown code blocks.`;
+- Output nothing else: no numbering, bullet points, headers, explanations, or markdown code blocks.`
+  },
+  fr: {
+    code: 'fr',
+    label: 'French',
+    title: 'Français',
+    exportPrefix: 'francais-cards',
+    singlePlaceholderTarget: 'e.g. la maison',
+    singlePlaceholderTranslation: 'e.g. das Haus / the house',
+    batchLabel: 'French | Translation',
+    batchPlaceholder:
+      'la maison | das Haus\nse souvenir de | sich erinnern an\npourtant | trotzdem',
+    aiPrompt: `Analyze this French image or text and extract vocabulary for flashcards.
+
+- If the source is already a vocabulary list, extract all entries.
+- If the source is a full page of prose, dialogue, or an article, be selective: extract ONLY the salient, high-value words, collocations, and idiomatic expressions worth learning (skip basic filler words, proper names, and trivial grammar words). Convert conjugated verbs or plural/inflected forms from the text into their clean base dictionary form.
+
+Output ONLY the extracted pairs, one per line, in this exact format:
+French | Translation
+
+Rules:
+- For French nouns, always show the gender via the article: use "le" or "la", and if the noun starts with a vowel or mute h ("l'…"), use "un" or "une" (e.g. un arbre, une habitude) so the gender is always clear.
+- For verbs with fixed prepositions or reflexive forms, include them (e.g. se souvenir de, penser à).
+- If translations are already present in the source, keep them; otherwise translate into natural German (Standard High German) or English matching the context.
+- Output nothing else: no numbering, bullet points, headers, explanations, or markdown code blocks.`
+  }
+};
+
+function loadSavedLang() {
+  try {
+    const saved = localStorage.getItem(LANG_STORAGE_KEY);
+    return saved === 'fr' ? 'fr' : 'de';
+  } catch {
+    return 'de';
+  }
+}
+
+function persistLang(lang) {
+  try {
+    localStorage.setItem(LANG_STORAGE_KEY, lang);
+  } catch {
+    // Ignore storage errors in restricted contexts
+  }
+}
 
 // DOM references
 const views = {
@@ -42,6 +98,8 @@ const views = {
   complete: document.getElementById('view-complete')
 };
 
+const btnLangDe = document.getElementById('btn-lang-de');
+const btnLangFr = document.getElementById('btn-lang-fr');
 const deckCountEl = document.getElementById('deck-count');
 const curveAreaEl = document.getElementById('curve-area');
 const curveLineEl = document.getElementById('curve-line');
@@ -68,6 +126,7 @@ const dictEmptyEl = document.getElementById('dict-empty');
 
 const dictEditOverlayEl = document.getElementById('dict-edit-overlay');
 const formDictEdit = document.getElementById('form-dict-edit');
+const labelDictEditTarget = document.getElementById('label-dict-edit-target');
 const dictEditGermanInput = document.getElementById('dict-edit-german');
 const dictEditTranslationInput = document.getElementById('dict-edit-translation');
 const btnDictDelete = document.getElementById('btn-dict-delete');
@@ -84,11 +143,13 @@ const btnGrammarNext = document.getElementById('btn-grammar-next');
 
 // Add / Batch DOM
 const formAddOne = document.getElementById('form-add-one');
+const labelInputTarget = document.getElementById('label-input-target');
 const inputGerman = document.getElementById('input-german');
 const inputTranslation = document.getElementById('input-translation');
 const addOneStatus = document.getElementById('add-one-status');
 
 const formBatch = document.getElementById('form-batch');
+const labelBatchTarget = document.getElementById('label-batch-target');
 const inputBatch = document.getElementById('input-batch');
 const btnBatchPaste = document.getElementById('btn-batch-paste');
 const batchStatus = document.getElementById('batch-status');
@@ -113,6 +174,7 @@ const btnCancelDelete = document.getElementById('btn-cancel-delete');
 
 const editOverlayEl = document.getElementById('edit-overlay');
 const formEditCard = document.getElementById('form-edit-card');
+const labelEditTarget = document.getElementById('label-edit-target');
 const editGermanInput = document.getElementById('edit-german');
 const editTranslationInput = document.getElementById('edit-translation');
 const btnCancelEdit = document.getElementById('btn-cancel-edit');
@@ -124,6 +186,7 @@ const sumNotEl = document.getElementById('sum-not');
 const btnFinishSession = document.getElementById('btn-finish-session');
 
 // State
+let currentLang = loadSavedLang();
 let allCards = [];
 let sessionQueue = [];
 let sessionIndex = 0;
@@ -141,6 +204,48 @@ let dictEditingCard = null;
 
 // Grammar state
 let currentGrammarPage = 0;
+
+function getActiveConfig() {
+  return LANG_CONFIG[currentLang] || LANG_CONFIG.de;
+}
+
+function getActiveGrammarPages() {
+  return GRAMMAR_BY_LANG[currentLang] || GRAMMAR_BY_LANG.de;
+}
+
+function applyLanguageUI() {
+  const cfg = getActiveConfig();
+  document.title = cfg.title;
+
+  btnLangDe.classList.toggle('is-active', currentLang === 'de');
+  btnLangFr.classList.toggle('is-active', currentLang === 'fr');
+  btnLangDe.setAttribute('aria-pressed', String(currentLang === 'de'));
+  btnLangFr.setAttribute('aria-pressed', String(currentLang === 'fr'));
+
+  labelInputTarget.textContent = cfg.label;
+  inputGerman.placeholder = cfg.singlePlaceholderTarget;
+  inputTranslation.placeholder = cfg.singlePlaceholderTranslation;
+
+  labelBatchTarget.textContent = cfg.batchLabel;
+  inputBatch.placeholder = cfg.batchPlaceholder;
+
+  labelEditTarget.textContent = cfg.label;
+  labelDictEditTarget.textContent = cfg.label;
+
+  currentGrammarPage = 0;
+  initGrammarCheatSheet();
+}
+
+async function setLanguage(lang) {
+  if (lang !== 'de' && lang !== 'fr') return;
+  if (lang === currentLang) return;
+
+  currentLang = lang;
+  persistLang(lang);
+  menuStatusEl.textContent = '';
+  applyLanguageUI();
+  await refreshMenu();
+}
 
 function showView(name) {
   for (const [key, el] of Object.entries(views)) {
@@ -221,7 +326,7 @@ function renderKnowledgeCurve(cards) {
 }
 
 async function refreshMenu() {
-  allCards = await getAllCards();
+  allCards = await getAllCards(currentLang);
   renderKnowledgeCurve(allCards);
 }
 
@@ -268,7 +373,7 @@ function updateDictionaryList(resetScroll = true) {
   const hasQuery = query.trim().length > 0;
   btnDictClear.classList.toggle('is-gone', !hasQuery);
 
-  dictFilteredCards = filterAndSortCards(allCards, query);
+  dictFilteredCards = filterAndSortCards(allCards, query, currentLang);
   dictListEl.textContent = '';
   dictRenderedCount = 0;
 
@@ -304,7 +409,7 @@ function updateDictionaryList(resetScroll = true) {
 }
 
 async function openDictionaryView() {
-  allCards = await getAllCards();
+  allCards = await getAllCards(currentLang);
   inputDictSearch.value = '';
   closeDictEditOverlay();
   showView('dictionary');
@@ -381,8 +486,8 @@ btnDictDelete.addEventListener('click', () => {
 btnDictConfirmDelete.addEventListener('click', async () => {
   if (!dictEditingCard) return;
   const scrollPos = dictScrollEl.scrollTop;
-  await deleteCard(dictEditingCard.id);
-  allCards = await getAllCards();
+  await deleteCard(dictEditingCard.id, currentLang);
+  allCards = await getAllCards(currentLang);
   closeDictEditOverlay();
   updateDictionaryList(false);
   dictScrollEl.scrollTop = scrollPos;
@@ -397,24 +502,28 @@ formDictEdit.addEventListener('submit', async (e) => {
   if (!german || !translation) return;
 
   const scrollPos = dictScrollEl.scrollTop;
-  await saveCard({
-    ...dictEditingCard,
-    german,
-    translation
-  });
-  allCards = await getAllCards();
+  await saveCard(
+    {
+      ...dictEditingCard,
+      german,
+      translation
+    },
+    currentLang
+  );
+  allCards = await getAllCards(currentLang);
   closeDictEditOverlay();
   updateDictionaryList(false);
   dictScrollEl.scrollTop = scrollPos;
 });
 
-// --- GRAMMAR CHEAT SHEET (5 SWIPEABLE PAGES) ---
+// --- GRAMMAR CHEAT SHEET (5 SWIPEABLE PAGES PER LANGUAGE) ---
 
 function initGrammarCheatSheet() {
+  const pages = getActiveGrammarPages();
   grammarTrackEl.textContent = '';
   grammarDotsEl.textContent = '';
 
-  GRAMMAR_PAGES.forEach((page, idx) => {
+  pages.forEach((page, idx) => {
     const slide = document.createElement('article');
     slide.className = 'grammar-slide';
     slide.setAttribute('aria-label', page.title);
@@ -434,11 +543,12 @@ function initGrammarCheatSheet() {
 }
 
 function updateGrammarHeader(idx) {
-  const total = GRAMMAR_PAGES.length;
+  const pages = getActiveGrammarPages();
+  const total = pages.length;
   const safeIdx = Math.max(0, Math.min(total - 1, idx));
   currentGrammarPage = safeIdx;
 
-  grammarPageTitleEl.textContent = GRAMMAR_PAGES[safeIdx].title;
+  grammarPageTitleEl.textContent = pages[safeIdx].title;
   grammarCounterEl.textContent = `${safeIdx + 1} / ${total}`;
   btnGrammarPrev.disabled = safeIdx === 0;
   btnGrammarNext.disabled = safeIdx === total - 1;
@@ -452,7 +562,8 @@ function updateGrammarHeader(idx) {
 }
 
 function goToGrammarPage(idx, smooth = true) {
-  const total = GRAMMAR_PAGES.length;
+  const pages = getActiveGrammarPages();
+  const total = pages.length;
   const safeIdx = Math.max(0, Math.min(total - 1, idx));
   const width = grammarTrackEl.clientWidth;
   updateGrammarHeader(safeIdx);
@@ -513,19 +624,19 @@ function renderCurrentSessionCard() {
   }
 
   const { card, direction } = item;
-  const frontIsGerman = direction === 'de-to-tr';
+  const frontIsTarget = direction === 'de-to-tr';
 
-  const frontText = frontIsGerman ? card.german : card.translation;
-  const backText = frontIsGerman ? card.translation : card.german;
+  const frontText = frontIsTarget ? card.german : card.translation;
+  const backText = frontIsTarget ? card.translation : card.german;
 
   // Prevent flip-back animation from flashing the next card's back face
   flashcardInnerEl.classList.add('no-transition');
   flashcardInnerEl.classList.remove('is-flipped');
 
-  cardFrontEl.classList.toggle('face-german', frontIsGerman);
-  cardFrontEl.classList.toggle('face-translation', !frontIsGerman);
-  cardBackEl.classList.toggle('face-german', !frontIsGerman);
-  cardBackEl.classList.toggle('face-translation', frontIsGerman);
+  cardFrontEl.classList.toggle('face-german', frontIsTarget);
+  cardFrontEl.classList.toggle('face-translation', !frontIsTarget);
+  cardBackEl.classList.toggle('face-german', !frontIsTarget);
+  cardBackEl.classList.toggle('face-translation', frontIsTarget);
 
   applyTextSizing(cardFrontTextEl, frontText);
   applyTextSizing(cardBackTextEl, backText);
@@ -546,7 +657,7 @@ function renderCurrentSessionCard() {
 }
 
 async function startRevisionSession() {
-  allCards = await getAllCards();
+  allCards = await getAllCards(currentLang);
   if (!allCards.length) return;
 
   sessionQueue = buildRevisionSession(allCards, 20);
@@ -581,7 +692,7 @@ async function handleRateCard(rating) {
   else sessionStats.not += 1;
 
   const updated = reviewCard(current.card, rating, Date.now());
-  await saveCard(updated);
+  await saveCard(updated, currentLang);
 
   sessionIndex += 1;
   if (sessionIndex >= sessionQueue.length) {
@@ -633,16 +744,25 @@ formEditCard.addEventListener('submit', async (e) => {
   const translation = cleanText(editTranslationInput.value);
   if (!german || !translation) return;
 
-  const saved = await saveCard({
-    ...current.card,
-    german,
-    translation
-  });
+  const saved = await saveCard(
+    {
+      ...current.card,
+      german,
+      translation
+    },
+    currentLang
+  );
 
   current.card = saved;
-  const frontIsGerman = current.direction === 'de-to-tr';
-  applyTextSizing(cardFrontTextEl, frontIsGerman ? saved.german : saved.translation);
-  applyTextSizing(cardBackTextEl, frontIsGerman ? saved.translation : saved.german);
+  const frontIsTarget = current.direction === 'de-to-tr';
+  applyTextSizing(
+    cardFrontTextEl,
+    frontIsTarget ? saved.german : saved.translation
+  );
+  applyTextSizing(
+    cardBackTextEl,
+    frontIsTarget ? saved.translation : saved.german
+  );
 
   closeEditOverlay();
 });
@@ -662,7 +782,7 @@ btnConfirmDelete.addEventListener('click', async () => {
   if (!current || isAdvancing) return;
   isAdvancing = true;
 
-  await deleteCard(current.card.id);
+  await deleteCard(current.card.id, currentLang);
   sessionQueue.splice(sessionIndex, 1);
 
   if (sessionIndex >= sessionQueue.length) {
@@ -680,7 +800,10 @@ formAddOne.addEventListener('submit', async (e) => {
   const translation = cleanText(inputTranslation.value);
   if (!german || !translation) return;
 
-  const { updated } = await upsertCardPairs([{ german, translation }]);
+  const { updated } = await upsertCardPairs(
+    [{ german, translation }],
+    currentLang
+  );
   inputGerman.value = '';
   inputTranslation.value = '';
   inputGerman.focus();
@@ -693,6 +816,7 @@ formAddOne.addEventListener('submit', async (e) => {
 // --- BATCH ADD CARDS ---
 
 function parseBatchInput(rawText) {
+  const cfg = getActiveConfig();
   const lines = rawText
     .replace(/^```[\w-]*\s*/gm, '')
     .replace(/```$/gm, '')
@@ -715,7 +839,7 @@ function parseBatchInput(rawText) {
 
     if (!german || !translation) {
       return {
-        error: `Line ${i + 1} needs both German and Translation sides`
+        error: `Line ${i + 1} needs both ${cfg.label} and Translation sides`
       };
     }
 
@@ -723,7 +847,7 @@ function parseBatchInput(rawText) {
   }
 
   if (pairs.length === 0) {
-    return { error: 'Paste at least one "German | Translation" line.' };
+    return { error: `Paste at least one "${cfg.batchLabel}" line.` };
   }
 
   return { pairs };
@@ -766,7 +890,7 @@ formBatch.addEventListener('submit', async (e) => {
     return;
   }
 
-  const { added, updated } = await upsertCardPairs(parsed.pairs);
+  const { added, updated } = await upsertCardPairs(parsed.pairs, currentLang);
   inputBatch.value = '';
   batchStatus.classList.remove('is-error');
 
@@ -804,14 +928,15 @@ const iconPromptCopied = document.getElementById('icon-prompt-copied');
 let copyBtnTimer = null;
 
 btnCopyPrompt.addEventListener('click', async () => {
-  const ok = await copyTextToClipboard(AI_EXTRACTION_PROMPT);
+  const cfg = getActiveConfig();
+  const ok = await copyTextToClipboard(cfg.aiPrompt);
   if (copyBtnTimer) clearTimeout(copyBtnTimer);
 
   if (ok) {
     iconPromptDefault.classList.add('is-gone');
     iconPromptCopied.classList.remove('is-gone');
     btnCopyPrompt.classList.add('btn-copied');
-    showMenuStatus('Prompt copied');
+    showMenuStatus(`${currentLang.toUpperCase()} prompt copied`);
   } else {
     showMenuStatus('Could not copy');
   }
@@ -826,14 +951,16 @@ btnCopyPrompt.addEventListener('click', async () => {
 // --- JSON BACKUP EXPORT & IMPORT ---
 
 btnExport.addEventListener('click', async () => {
-  const cards = await getAllCards();
+  const cards = await getAllCards(currentLang);
   if (!cards.length) {
     showMenuStatus('No cards to export yet');
     return;
   }
 
+  const cfg = getActiveConfig();
   const payload = {
     version: 1,
+    language: currentLang,
     exportedAt: new Date().toISOString(),
     cards
   };
@@ -842,7 +969,7 @@ btnExport.addEventListener('click', async () => {
     type: 'application/json'
   });
   const dateStr = new Date().toISOString().slice(0, 10);
-  const filename = `deutsch-cards-${dateStr}.json`;
+  const filename = `${cfg.exportPrefix}-${dateStr}.json`;
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -868,8 +995,21 @@ fileImport.addEventListener('change', async () => {
   try {
     const text = await file.text();
     const json = JSON.parse(text);
+
+    if (
+      json &&
+      !Array.isArray(json) &&
+      json.language &&
+      json.language !== currentLang
+    ) {
+      showMenuStatus(
+        `Switch to ${String(json.language).toUpperCase()} mode to import this backup`
+      );
+      return;
+    }
+
     const list = Array.isArray(json) ? json : json.cards;
-    const { added, updated } = await importBackupCards(list);
+    const { added, updated } = await importBackupCards(list, currentLang);
     await refreshMenu();
     showMenuStatus(`Imported: ${added} new, ${updated} updated`);
   } catch {
@@ -878,6 +1018,9 @@ fileImport.addEventListener('change', async () => {
 });
 
 // --- NAVIGATION & INTERACTION BINDINGS ---
+
+btnLangDe.addEventListener('click', () => setLanguage('de'));
+btnLangFr.addEventListener('click', () => setLanguage('fr'));
 
 btnGoRevise.addEventListener('click', startRevisionSession);
 btnGoDictionary.addEventListener('click', openDictionaryView);
@@ -937,7 +1080,7 @@ ratingBarEl.querySelectorAll('.rate-btn').forEach((btn) => {
 // --- INITIALIZATION & SERVICE WORKER ---
 
 async function init() {
-  initGrammarCheatSheet();
+  applyLanguageUI();
   await requestPersistentStorage();
   await refreshMenu();
 

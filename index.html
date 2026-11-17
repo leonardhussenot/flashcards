@@ -8,9 +8,9 @@
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Deutsch" />
+    <meta name="apple-mobile-web-app-title" content="Cards" />
     <meta name="theme-color" content="#F4F2ED" />
-    <title>Deutsch</title>
+    <title>Cards</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
@@ -23,6 +23,26 @@
         <div class="menu-top">
           <div class="progress-card">
             <div class="progress-header">
+              <div class="lang-switch" role="group" aria-label="Learned language">
+                <button
+                  id="btn-lang-de"
+                  class="lang-pill is-active"
+                  type="button"
+                  data-lang="de"
+                  aria-label="Learn German"
+                >
+                  DE
+                </button>
+                <button
+                  id="btn-lang-fr"
+                  class="lang-pill"
+                  type="button"
+                  data-lang="fr"
+                  aria-label="Learn French"
+                >
+                  FR
+                </button>
+              </div>
               <span id="deck-count" class="deck-count">0 cards</span>
             </div>
             <div class="curve-wrap" aria-label="Knowledge distribution">
@@ -252,7 +272,7 @@
         <div id="dict-edit-overlay" class="edit-overlay is-hidden" role="dialog" aria-modal="true">
           <form id="form-dict-edit" class="edit-sheet" autocomplete="off">
             <div class="field">
-              <label for="dict-edit-german">German</label>
+              <label id="label-dict-edit-target" for="dict-edit-german">German</label>
               <input
                 id="dict-edit-german"
                 type="text"
@@ -386,7 +406,7 @@
 
         <form id="form-add-one" class="panel-body" autocomplete="off">
           <div class="field">
-            <label for="input-german">German</label>
+            <label id="label-input-target" for="input-german">German</label>
             <input
               id="input-german"
               type="text"
@@ -444,7 +464,7 @@
 
         <form id="form-batch" class="panel-body batch-body">
           <div class="field field-grow">
-            <label for="input-batch">German | Translation</label>
+            <label id="label-batch-target" for="input-batch">German | Translation</label>
             <textarea
               id="input-batch"
               placeholder="der Hund | the dog&#10;sich erinnern an | se souvenir de&#10;trotzdem | nevertheless"
@@ -615,7 +635,7 @@
         <div id="edit-overlay" class="edit-overlay is-hidden" role="dialog" aria-modal="true">
           <form id="form-edit-card" class="edit-sheet" autocomplete="off">
             <div class="field">
-              <label for="edit-german">German</label>
+              <label id="label-edit-target" for="edit-german">German</label>
               <input
                 id="edit-german"
                 type="text"

@@ -123,8 +123,37 @@ button {
 
 .progress-header {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 4px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.lang-switch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  gap: 2px;
+}
+
+.lang-pill {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 3.5px 9px;
+  border-radius: 6.5px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.lang-pill.is-active {
+  background: var(--ink);
+  color: var(--surface);
 }
 
 .deck-count {

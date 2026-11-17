@@ -1,16 +1,21 @@
-// Dictionary search & German headword alphabetical sorting helpers
+// Dictionary search & headword alphabetical sorting helpers for DE and FR
 
-const LEADING_PREFIX_RE =
+const LEADING_PREFIX_DE_RE =
   /^(?:(?:\(es\)\s+)|(?:der|die|das|ein|eine|einen|einem|eines|sich|jemanden|jemandem|jemandes|etwas)\s+)+/i;
 
+const LEADING_PREFIX_FR_RE =
+  /^(?:(?:de\s+la\s+|de\s+l['’]\s*)|(?:le|la|les|un|une|des|du|se|quelqu['’]un|quelque\s+chose)\s+|(?:l|s|d)['’]\s*)+/i;
+
 /**
- * Normalizes text for accent-insensitive and German ß/ss-insensitive matching.
- * e.g. "Überraschung" -> "uberraschung", "stoßen" -> "stossen", "être" -> "etre"
+ * Normalizes text for accent-, ligature-, and German ß/ss-insensitive matching.
+ * e.g. "Überraschung" -> "uberraschung", "stoßen" -> "stossen", "le cœur" -> "le coeur"
  */
 export function foldSearchText(text) {
   return String(text || '')
     .toLowerCase()
     .replace(/ß/g, 'ss')
+    .replace(/œ/g, 'oe')
+    .replace(/æ/g, 'ae')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[’']/g, "'")
@@ -18,31 +23,37 @@ export function foldSearchText(text) {
 }
 
 /**
- * Extracts the core German headword for natural dictionary sorting
- * so "der Hund" sorts under H and "sich umdrehen" sorts under U.
+ * Extracts the core headword for natural dictionary sorting:
+ * - DE: "der Hund" -> "hund", "sich umdrehen" -> "umdrehen"
+ * - FR: "la maison" -> "maison", "l'arbre" -> "arbre", "se souvenir de" -> "souvenir de"
  */
-export function getSortHeadword(german) {
-  const raw = String(german || '')
+export function getSortHeadword(text, lang = 'de') {
+  const raw = String(text || '')
     .trim()
     .replace(/^["„«¡¿]+/, '');
-  const stripped = raw.replace(LEADING_PREFIX_RE, '').replace(/^[()]+/, '').trim();
+  const prefixRe = lang === 'fr' ? LEADING_PREFIX_FR_RE : LEADING_PREFIX_DE_RE;
+  const stripped = raw
+    .replace(prefixRe, '')
+    .replace(/^[()]+/, '')
+    .trim();
   return foldSearchText(stripped || raw);
 }
 
 /**
- * Returns cards sorted alphabetically by German headword, or ranked by relevance
- * when a search query is active (matching both German and Translation).
+ * Returns cards sorted alphabetically by headword, or ranked by relevance
+ * when a search query is active (matching both target expression and translation).
  */
-export function filterAndSortCards(cards, query = '') {
+export function filterAndSortCards(cards, query = '', lang = 'de') {
+  const locale = lang === 'fr' ? 'fr' : 'de';
   const qFolded = foldSearchText(query);
   const qRaw = String(query || '').trim().toLowerCase();
 
   if (!qFolded) {
     return [...cards].sort((a, b) => {
-      const ha = getSortHeadword(a.german);
-      const hb = getSortHeadword(b.german);
-      if (ha !== hb) return ha.localeCompare(hb, 'de');
-      return a.german.localeCompare(b.german, 'de');
+      const ha = getSortHeadword(a.german, lang);
+      const hb = getSortHeadword(b.german, lang);
+      if (ha !== hb) return ha.localeCompare(hb, locale);
+      return a.german.localeCompare(b.german, locale);
     });
   }
 
@@ -50,7 +61,7 @@ export function filterAndSortCards(cards, query = '') {
   for (const card of cards) {
     const deFolded = foldSearchText(card.german);
     const trFolded = foldSearchText(card.translation);
-    const headFolded = getSortHeadword(card.german);
+    const headFolded = getSortHeadword(card.german, lang);
     const deRaw = card.german.toLowerCase();
     const trRaw = card.translation.toLowerCase();
 
@@ -59,10 +70,12 @@ export function filterAndSortCards(cards, query = '') {
 
     if (!inDe && !inTr) continue;
 
-    // Relevance rank: 0 = exact headword/full, 1 = prefix of headword/German,
-    // 2 = prefix of translation, 3 = substring in German, 4 = substring in translation
     let rank = 4;
-    if (headFolded === qFolded || deFolded === qFolded || trFolded === qFolded) {
+    if (
+      headFolded === qFolded ||
+      deFolded === qFolded ||
+      trFolded === qFolded
+    ) {
       rank = 0;
     } else if (headFolded.startsWith(qFolded) || deFolded.startsWith(qFolded)) {
       rank = 1;
@@ -78,9 +91,9 @@ export function filterAndSortCards(cards, query = '') {
   matches.sort((a, b) => {
     if (a.rank !== b.rank) return a.rank - b.rank;
     if (a.headFolded !== b.headFolded) {
-      return a.headFolded.localeCompare(b.headFolded, 'de');
+      return a.headFolded.localeCompare(b.headFolded, locale);
     }
-    return a.card.german.localeCompare(b.card.german, 'de');
+    return a.card.german.localeCompare(b.card.german, locale);
   });
 
   return matches.map((m) => m.card);

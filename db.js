@@ -1,12 +1,17 @@
-// IndexedDB persistence layer for on-device flashcard storage
+// IndexedDB persistence layer supporting isolated 'de' and 'fr' decks
 
 const DB_NAME = 'german_flashcards_db';
-const DB_VERSION = 1;
-const STORE_NAME = 'cards';
+const DB_VERSION = 2;
+const STORE_DE = 'cards';    // Preserves existing German deck with zero migration risk
+const STORE_FR = 'cards_fr'; // Separate deck for French mode
 
 let dbPromise = null;
 
-export function normalizeGermanKey(text) {
+function getStoreName(lang = 'de') {
+  return lang === 'fr' ? STORE_FR : STORE_DE;
+}
+
+export function normalizeTargetKey(text) {
   return String(text || '')
     .trim()
     .replace(/\s+/g, ' ')
@@ -44,9 +49,13 @@ function openDB() {
 
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('germanKey', 'germanKey', { unique: true });
+      if (!db.objectStoreNames.contains(STORE_DE)) {
+        const storeDe = db.createObjectStore(STORE_DE, { keyPath: 'id' });
+        storeDe.createIndex('germanKey', 'germanKey', { unique: true });
+      }
+      if (!db.objectStoreNames.contains(STORE_FR)) {
+        const storeFr = db.createObjectStore(STORE_FR, { keyPath: 'id' });
+        storeFr.createIndex('germanKey', 'germanKey', { unique: true });
       }
     };
 
@@ -57,11 +66,12 @@ function openDB() {
   return dbPromise;
 }
 
-export async function getAllCards() {
+export async function getAllCards(lang = 'de') {
+  const storeName = getStoreName(lang);
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const store = tx.objectStore(STORE_NAME);
+    const tx = db.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
     const req = store.getAll();
     req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => reject(req.error);
@@ -69,13 +79,12 @@ export async function getAllCards() {
 }
 
 /**
- * Adds new cards or updates translation if German text already exists
+ * Adds new cards or updates translation if target text already exists
  * while preserving FSRS learning progress.
- * @param {Array<{german: string, translation: string}>} pairs
- * @returns {Promise<{added: number, updated: number}>}
  */
-export async function upsertCardPairs(pairs) {
-  const existing = await getAllCards();
+export async function upsertCardPairs(pairs, lang = 'de') {
+  const storeName = getStoreName(lang);
+  const existing = await getAllCards(lang);
   const byKey = new Map(existing.map((c) => [c.germanKey, c]));
 
   let added = 0;
@@ -88,7 +97,7 @@ export async function upsertCardPairs(pairs) {
     const translation = cleanText(raw.translation);
     if (!german || !translation) continue;
 
-    const key = normalizeGermanKey(german);
+    const key = normalizeTargetKey(german);
     const match = byKey.get(key);
 
     if (match) {
@@ -126,8 +135,8 @@ export async function upsertCardPairs(pairs) {
   if (toPut.length > 0) {
     const db = await openDB();
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
       for (const card of toPut) {
         store.put(card);
       }
@@ -141,17 +150,17 @@ export async function upsertCardPairs(pairs) {
 
 /**
  * Saves an updated card (e.g. after FSRS review or inline edit).
- * Handles potential key collision if German text was edited to match another card.
  */
-export async function saveCard(card) {
+export async function saveCard(card, lang = 'de') {
+  const storeName = getStoreName(lang);
   const german = cleanText(card.german);
   const translation = cleanText(card.translation);
-  const key = normalizeGermanKey(german);
+  const key = normalizeTargetKey(german);
 
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
     const index = store.index('germanKey');
     const lookup = index.get(key);
 
@@ -175,25 +184,28 @@ export async function saveCard(card) {
   });
 }
 
-export async function deleteCard(id) {
+export async function deleteCard(id, lang = 'de') {
+  const storeName = getStoreName(lang);
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(id);
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
 /**
- * Imports cards from a JSON backup file, preserving FSRS learning history.
+ * Imports cards from a JSON backup file into the active language deck,
+ * preserving FSRS learning history.
  */
-export async function importBackupCards(rawCards) {
+export async function importBackupCards(rawCards, lang = 'de') {
   if (!Array.isArray(rawCards)) {
     throw new Error('Invalid backup format: expected a list of cards.');
   }
 
-  const existing = await getAllCards();
+  const storeName = getStoreName(lang);
+  const existing = await getAllCards(lang);
   const byKey = new Map(existing.map((c) => [c.germanKey, c]));
   const now = Date.now();
   const toPut = [];
@@ -202,15 +214,19 @@ export async function importBackupCards(rawCards) {
 
   for (const item of rawCards) {
     if (!item || typeof item !== 'object') continue;
-    const german = cleanText(item.german);
+    const german = cleanText(item.german ?? item.target);
     const translation = cleanText(item.translation);
     if (!german || !translation) continue;
 
-    const key = normalizeGermanKey(german);
+    const key = normalizeTargetKey(german);
     const current = byKey.get(key);
 
     const incomingCard = {
-      id: current ? current.id : (typeof item.id === 'string' && item.id ? item.id : generateId()),
+      id: current
+        ? current.id
+        : typeof item.id === 'string' && item.id
+          ? item.id
+          : generateId(),
       german,
       germanKey: key,
       translation,
@@ -225,10 +241,10 @@ export async function importBackupCards(rawCards) {
     };
 
     if (current) {
-      // Keep whichever version has newer review activity so local progress isn't downgraded
       const keepLocalProgress =
         (current.lastReviewAt || 0) > (incomingCard.lastReviewAt || 0) ||
-        ((current.reps || 0) > (incomingCard.reps || 0) && !incomingCard.lastReviewAt);
+        ((current.reps || 0) > (incomingCard.reps || 0) &&
+          !incomingCard.lastReviewAt);
 
       const merged = keepLocalProgress
         ? {
@@ -253,8 +269,8 @@ export async function importBackupCards(rawCards) {
   if (toPut.length > 0) {
     const db = await openDB();
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
       for (const c of toPut) {
         store.put(c);
       }
