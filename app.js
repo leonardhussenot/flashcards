@@ -49,24 +49,26 @@ Rules:
     label: 'French',
     title: 'Français',
     exportPrefix: 'francais-cards',
-    singlePlaceholderTarget: 'e.g. la maison',
-    singlePlaceholderTranslation: 'e.g. das Haus / the house',
+    singlePlaceholderTarget: 'e.g. un écueil',
+    singlePlaceholderTranslation: 'e.g. eine Klippe / Hürde',
     batchLabel: 'French | Translation',
     batchPlaceholder:
-      'la maison | das Haus\nse souvenir de | sich erinnern an\npourtant | trotzdem',
-    aiPrompt: `Analyze this French image or text and extract vocabulary for flashcards.
+      "un écueil | eine Klippe / Hürde\ns'en tenir à | sich beschränken auf\navoir beau (+ inf.) | vergeblich …",
+    aiPrompt: `You are helping an advanced (B2/C1) German-speaking learner build flashcards from a page of a French book.
 
-- If the source is already a vocabulary list, extract all entries.
-- If the source is a full page of prose, dialogue, or an article, be selective: extract ONLY the salient, high-value words, collocations, and idiomatic expressions worth learning (skip basic filler words, proper names, and trivial grammar words). Convert conjugated verbs or plural/inflected forms from the text into their clean base dictionary form.
+Carefully read this page of French text and extract ONLY the most valuable advanced vocabulary, nuanced collocations, literary verbs/adjectives, and idiomatic expressions worth adding to a B2–C2 flashcard deck.
+
+Selection & normalization rules:
+- Skip all A1–B1 everyday words and obvious cognates (unless used as false friends or in a non-literal idiomatic sense). Prefer quality over quantity (typically 5–15 strong items from a page).
+- Convert conjugated verbs (including passé simple or subjunctive), plurals, and inflected phrases from the text into their clean base dictionary form.
+- For nouns, always make gender explicit via the article: use "le" or "la", and if the noun starts with a vowel or mute h ("l'…"), use "un" or "une" (e.g. un écueil, une entrave) so gender is never hidden.
+- For verbs and idioms, include reflexive pronouns and fixed prepositions (e.g. s'en tenir à, se garder de, avoir beau + inf.).
+- Translate into precise, natural Standard German (Hochdeutsch) matching the exact nuance and register in context.
 
 Output ONLY the extracted pairs, one per line, in this exact format:
 French | Translation
 
-Rules:
-- For French nouns, always show the gender via the article: use "le" or "la", and if the noun starts with a vowel or mute h ("l'…"), use "un" or "une" (e.g. un arbre, une habitude) so the gender is always clear.
-- For verbs with fixed prepositions or reflexive forms, include them (e.g. se souvenir de, penser à).
-- If translations are already present in the source, keep them; otherwise translate into natural German (Standard High German) or English matching the context.
-- Output nothing else: no numbering, bullet points, headers, explanations, or markdown code blocks.`
+Do not include numbering, bullet points, headers, explanations, or markdown code blocks.`
   }
 };
 
