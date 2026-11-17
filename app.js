@@ -87,6 +87,61 @@ function persistLang(lang) {
   }
 }
 
+function getLocalDateString(ts = Date.now()) {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getStartOfLocalDayMs(now = Date.now()) {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function getTodayCountFromStorage(lang) {
+  try {
+    const raw = localStorage.getItem(`daily_reviews_${lang}`);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.date === getLocalDateString()) {
+      return Number(parsed.count) || 0;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 0;
+}
+
+function recordTodayReview(lang, cardsSnapshot = []) {
+  const today = getLocalDateString();
+  const startMs = getStartOfLocalDayMs();
+  const dbTodayCount = cardsSnapshot.filter(
+    (c) => (c.lastReviewAt || 0) >= startMs
+  ).length;
+  const current = Math.max(getTodayCountFromStorage(lang), dbTodayCount);
+  const next = current + 1;
+  try {
+    localStorage.setItem(
+      `daily_reviews_${lang}`,
+      JSON.stringify({ date: today, count: next })
+    );
+  } catch {
+    // Ignore storage errors
+  }
+  return next;
+}
+
+function computeTodayWorkedCount(cards, lang) {
+  const startMs = getStartOfLocalDayMs();
+  const dbTodayCount = cards.filter(
+    (c) => (c.lastReviewAt || 0) >= startMs
+  ).length;
+  return Math.max(getTodayCountFromStorage(lang), dbTodayCount);
+}
+
 // DOM references
 const views = {
   menu: document.getElementById('view-menu'),
@@ -100,6 +155,7 @@ const views = {
 
 const btnLangDe = document.getElementById('btn-lang-de');
 const btnLangFr = document.getElementById('btn-lang-fr');
+const todayCountEl = document.getElementById('today-count');
 const deckCountEl = document.getElementById('deck-count');
 const curveAreaEl = document.getElementById('curve-area');
 const curveLineEl = document.getElementById('curve-line');
@@ -269,6 +325,11 @@ function showMenuStatus(msg) {
  */
 function renderKnowledgeCurve(cards) {
   const count = cards.length;
+  const todayWorked = computeTodayWorkedCount(cards, currentLang);
+
+  todayCountEl.textContent = `${todayWorked} today`;
+  todayCountEl.classList.toggle('has-progress', todayWorked > 0);
+
   deckCountEl.textContent = count === 1 ? '1 card' : `${count} cards`;
   btnGoRevise.disabled = count === 0;
 
@@ -692,6 +753,7 @@ async function handleRateCard(rating) {
   else sessionStats.not += 1;
 
   const updated = reviewCard(current.card, rating, Date.now());
+  recordTodayReview(currentLang, allCards);
   await saveCard(updated, currentLang);
 
   sessionIndex += 1;
@@ -1075,6 +1137,15 @@ ratingBarEl.querySelectorAll('.rate-btn').forEach((btn) => {
     const rating = Number(btn.dataset.rating);
     handleRateCard(rating);
   });
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (
+    document.visibilityState === 'visible' &&
+    views.menu.classList.contains('is-active')
+  ) {
+    refreshMenu();
+  }
 });
 
 // --- INITIALIZATION & SERVICE WORKER ---
